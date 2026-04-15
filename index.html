@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>The Interlude Times | Interactive Magazine</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    
+    <!-- CDNs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/turn.js/3/turn.min.js"></script>
+
+    <style>
+        :root {
+            --bg-color: #000000;
+            --accent-gold: #c9a84c;
+            --text-gray: #333333;
+            --text-light: #ffffff;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Loading Screen */
+        #loader {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--bg-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            transition: opacity 0.8s ease-out, visibility 0.8s;
+        }
+
+        .spinner {
+            display: none;
+        }
+
+        #loader p {
+            display: none;
+        }
+
+        /* Flipbook Viewport */
+        #viewport {
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            perspective: 2000px;
+            background: #000;
+        }
+
+        #flipbook {
+            transition: transform 0.6s cubic-bezier(0.645, 0.045, 0.355, 1);
+            margin: auto;
+        }
+
+        .page {
+            background-color: white;
+            overflow: hidden;
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+            transform: translate3d(0,0,0);
+        }
+
+        .page canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        /* Essential Nav Icons - Minimalist Ghost Style */
+        .nav-btn {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            width: 12%;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            color: rgba(255, 255, 255, 0.15);
+            font-size: 3rem;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            outline: none;
+            text-decoration: none;
+        }
+
+        .nav-btn:hover {
+            color: rgba(255, 255, 255, 0.7);
+            background: linear-gradient(to right, rgba(255,255,255,0.03), transparent);
+        }
+
+        #next-btn:hover {
+            background: linear-gradient(to left, rgba(255,255,255,0.03), transparent);
+        }
+
+        /* Cinematic Background Effects */
+        #cinematic-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 50;
+            background: url("https://www.transparenttextures.com/patterns/stardust.png");
+            opacity: 0.15;
+            animation: grain 8s steps(10) infinite;
+        }
+
+        @keyframes grain {
+            0%, 100% { transform: translate(0, 0); }
+            10% { transform: translate(-1%, -1%); }
+            20% { transform: translate(1%, 1%); }
+            30% { transform: translate(-2%, 0); }
+            40% { transform: translate(2%, 2%); }
+            50% { transform: translate(-1%, 1%); }
+            60% { transform: translate(1%, -2%); }
+            70% { transform: translate(-2%, 2%); }
+            80% { transform: translate(2%, -1%); }
+            90% { transform: translate(-1%, 2%); }
+        }
+
+        #prev-btn { left: 0; }
+        #next-btn { right: 0; }
+
+        @media (max-width: 1024px) {
+            .nav-btn {
+                display: none; /* Hide arrows on touch devices to favor swipe/tap */
+            }
+        }
+
+        .hidden {
+            opacity: 0;
+            visibility: hidden;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loader"></div>
+    <div id="cinematic-overlay"></div>
+
+    <main id="viewport">
+        <button id="prev-btn" class="nav-btn">&lsaquo;</button>
+        <div id="flipbook"></div>
+        <button id="next-btn" class="nav-btn">&rsaquo;</button>
+    </main>
+
+    <script>
+        // PDF.js configuration
+        const pdfUrl = encodeURI('The Interlude Times (1).pdf');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        let pdfDoc = null;
+        let totalPages = 0;
+        let renderedCount = 0;
+        let isBookInitialized = false;
+        const flipbook = $('#flipbook');
+        const scale = 2.0;
+
+        async function init() {
+            try {
+                console.log('Fetching PDF:', pdfUrl);
+                // Load PDF
+                const loadingTask = pdfjsLib.getDocument(pdfUrl);
+                pdfDoc = await loadingTask.promise;
+                totalPages = pdfDoc.numPages;
+                console.log('PDF Loaded, pages:', totalPages);
+
+                // Render all pages
+                for (let i = 1; i <= totalPages; i++) {
+                    await renderPage(i);
+                }
+
+                // Initialize Turn.js
+                initFlipbook();
+                
+                // Hide loader
+                setTimeout(() => {
+                    $('#loader').addClass('hidden');
+                }, 500);
+            } catch (error) {
+                console.error('Error loading PDF:', error);
+                $('#loading-text').html('ERROR LOADING PDF: ' + error.message + '<br><small>Ensure the file is in the same folder as this HTML</small>');
+            }
+        }
+
+        async function renderPage(num) {
+            const page = await pdfDoc.getPage(num);
+            const viewport = page.getViewport({ scale });
+            
+            // Create page element
+            const pageDiv = $('<div class="page shadow"></div>');
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            
+            // Set canvas styles to maintain aspect ratio
+            const renderContext = {
+                canvasContext: context,
+                viewport: viewport
+            };
+
+            await page.render(renderContext).promise;
+            
+            pageDiv.append(canvas);
+            flipbook.append(pageDiv);
+            
+            renderedCount++;
+            $('#loading-text').text(`RENDERING: ${renderedCount} / ${totalPages}`);
+        }
+
+        function initFlipbook() {
+            renderFlipbook();
+
+            // Navigation event listeners
+            $('#prev-btn').on('click', () => flipbook.turn('previous'));
+            $('#next-btn').on('click', () => flipbook.turn('next'));
+
+            $(document).keydown(function(e) {
+                if (e.keyCode == 37) flipbook.turn('previous');
+                if (e.keyCode == 39) flipbook.turn('next');
+            });
+
+            // Swipe gestures for mobile
+            let touchStartX = 0;
+            let touchEndX = 0;
+            
+            document.addEventListener('touchstart', e => {
+                touchStartX = e.changedTouches[0].screenX;
+            }, false);
+
+            document.addEventListener('touchend', e => {
+                touchEndX = e.changedTouches[0].screenX;
+                handleSwipe();
+            }, false);
+
+            function handleSwipe() {
+                if (touchEndX < touchStartX - 50) flipbook.turn('next');
+                if (touchEndX > touchStartX + 50) flipbook.turn('previous');
+            }
+        }
+
+        function renderFlipbook() {
+            const winW = window.innerWidth;
+            const winH = window.innerHeight;
+            const isMobile = winW <= 768;
+            const isTablet = winW > 768 && winW <= 1024;
+            const isPortrait = winH > winW;
+            
+            // Mode selection: Single for mobile OR portrait tablets
+            const displayMode = (isMobile || (isTablet && isPortrait)) ? 'single' : 'double';
+            
+            // Available space with device-specific margins
+            let marginW = 100;
+            let marginH = 60;
+            if (isMobile) { marginW = 10; marginH = 20; }
+            else if (isTablet) { marginW = 40; marginH = 40; }
+            
+            const availableW = winW - marginW;
+            const availableH = winH - marginH;
+            
+            if (renderedCount === 0) return;
+            const firstCanvas = flipbook.find('canvas')[0];
+            const pageRatio = firstCanvas.width / firstCanvas.height;
+            
+            let bookW, bookH;
+            
+            if (displayMode === 'single') {
+                bookH = availableH;
+                bookW = bookH * pageRatio;
+                if (bookW > availableW) {
+                    bookW = availableW;
+                    bookH = bookW / pageRatio;
+                }
+            } else {
+                const bookRatio = pageRatio * 2;
+                bookW = availableW;
+                bookH = bookW / bookRatio;
+                
+                if (bookH > availableH) {
+                    bookH = availableH;
+                    bookW = bookH * bookRatio;
+                }
+            }
+
+            // If already initialized, update size and possibly display mode
+            if (isBookInitialized) {
+                if (flipbook.turn('display') !== displayMode) {
+                    // Turn.js 3 doesn't like dynamic display switching flawlessly
+                    // We might need to refresh if it gets messy, but we'll try 'display'
+                    flipbook.turn('display', displayMode);
+                }
+                flipbook.turn('size', Math.floor(bookW), Math.floor(bookH));
+                updateCentering(flipbook.turn('page'), bookW);
+                return;
+            }
+
+            flipbook.turn({
+                width: Math.floor(bookW),
+                height: Math.floor(bookH),
+                autoCenter: true,
+                display: displayMode,
+                acceleration: true,
+                gradients: true,
+                elevation: 150, // More depth for smoother look
+                duration: 800,  // Slightly slower, more luxurious flip
+                when: {
+                    turning: function(e, page) {
+                        updateCentering(page, Math.floor(bookW));
+                    }
+                }
+            });
+
+            isBookInitialized = true;
+            updateCentering(1, Math.floor(bookW));
+        }
+
+        function updateCentering(page, bookW) {
+            const winW = window.innerWidth;
+            const winH = window.innerHeight;
+            const isMobile = winW <= 768;
+            const isTablet = winW > 768 && winW <= 1024;
+            const isPortrait = winH > winW;
+            const displayMode = (isMobile || (isTablet && isPortrait)) ? 'single' : 'double';
+
+            if (displayMode === 'single') {
+                flipbook.css('transform', 'none');
+                return;
+            }
+
+            if (page === 1) {
+                const shift = bookW / 4;
+                flipbook.css('transform', `translateX(-${shift}px)`);
+            } else if (page === totalPages && totalPages % 2 === 0) {
+                const shift = bookW / 4;
+                flipbook.css('transform', `translateX(${shift}px)`);
+            } else {
+                flipbook.css('transform', 'translateX(0)');
+            }
+        }
+
+        // Handle Resize
+        let resizeTimer;
+        $(window).resize(function() {
+            if (!isBookInitialized) return;
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(function() {
+                const isMobile = window.innerWidth <= 768;
+                flipbook.turn('display', isMobile ? 'single' : 'double');
+                renderFlipbook();
+            }, 200);
+        });
+
+        // Run Init
+        init();
+
+    </script>
+</body>
+</html>
